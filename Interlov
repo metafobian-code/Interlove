@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gramática del caos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101a24;
+    --ink: #dfe7ee;
+    --dim: #6f8296;
+    --cursor: #8fb8de;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-weight: 300;
+    cursor: pointer;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6vh 7vw;
+  }
+  #text {
+    width: 100%;
+    max-width: 38rem;
+    font-size: clamp(1rem, 0.9rem + 0.7vw, 1.3rem);
+    line-height: 1.85;
+    margin: 0;
+  }
+  .w { display: inline-block; white-space: nowrap; }
+  .c { visibility: hidden; display: inline-block; }
+  .c.on { visibility: visible; }
+  .c.off { visibility: visible; opacity: 0; transform: translateY(-3px); transition: opacity .3s, transform .3s; }
+  .cursor {
+    display: inline-block;
+    width: .6em;
+    height: 1.1em;
+    margin-left: 1px;
+    vertical-align: text-bottom;
+    background: var(--cursor);
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  #hint, #count {
+    position: fixed;
+    bottom: 3vh;
+    font-size: .75rem;
+    color: var(--dim);
+    letter-spacing: .02em;
+  }
+  #hint { left: 7vw; }
+  #count { right: 7vw; }
+  #hint, #count { display: none; }
+  #gate {
+    position: fixed; inset: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(16,26,36,.82);
+    cursor: default;
+  }
+  #gate .box {
+    min-width: 17rem;
+    padding: 1.6rem 1.8rem 1.4rem;
+    background: #172431;
+    border: 1px solid #2c4054;
+    border-radius: 6px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.5);
+  }
+  #gate h1 { margin: 0 0 1.6rem; font-size: 1.05rem; font-weight: 400; }
+  #gate .opts { display: flex; gap: .7rem; justify-content: flex-end; }
+  #gate button, #again button {
+    font: inherit; font-size: .9rem; color: var(--ink);
+    background: transparent; border: 1px solid #3a5167; border-radius: 4px;
+    padding: .45rem 1.3rem; cursor: pointer;
+  }
+  #gate button:hover, #again button:hover { background: #22364a; }
+  #gate button:focus-visible, #again button:focus-visible { outline: 2px solid var(--cursor); outline-offset: 2px; }
+  .c.lit { color: #fff; text-shadow: 0 0 8px rgba(143,184,222,.95), 0 0 22px rgba(143,184,222,.6); }
+  #again { display: flex; gap: .7rem; margin-top: 1.4rem; }
+  #hall { display: none; cursor: default; }
+  @media (prefers-reduced-motion: reduce) {
+    .cursor { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main><p id="text" aria-live="polite"></p></main>
+<canvas id="fx" aria-hidden="true"></canvas>
+<canvas id="hall" aria-label="Un pasillo interminable de palabras"></canvas>
+<div id="gate" style="display:none" role="dialog" aria-modal="true" aria-labelledby="gt">
+  <div class="box">
+    <h1 id="gt">Ejecutar</h1>
+    <div class="opts"><button id="no">No</button><button id="yes">Sí</button></div>
+  </div>
+</div>
+<div id="hint">clic o espacio para avanzar</div>
+<div id="count"></div>
+
+<script>
+/* ============ EDITA TU TEXTO AQUÍ ============
+   Cada elemento del arreglo es una parte que se escribe y se desintegra. */
+const SEGMENTS = [
+  "Hay algo en el caos que parece ordenar sus propias reglas cuando intento seguirlo.",
+  "No son las palabras, ni siquiera sus signos, sino el lugar que ocupan entre otras palabras, la forma en que una frase comienza a significar cuando entra en un juego y deja de ser solamente una frase.",
+  "Aún digo que tu noche es una gramática que todavía no conozco. Quiero acercarme por sus bordes, por aquello que hace posible decir una cosa y no otra, por la pequeña diferencia que cambia el sentido de lo que parecía evidente.",
+  "Y mientras intento seguir sus reglas, descubro que también cambian las mías.",
+  "Pienso que las cosas tienen una forma extraña de modificar nuestras certezas: no porque revelen una verdad oculta, sino porque cambian el lugar desde el que estábamos hablando.",
+  "Entonces comprendo que la duda no siempre es un problema que resolver. A veces solamente señala que todavía no sabemos qué hacer con una palabra.",
+  "Quizá no quiero convertirlo en una respuesta. Quiero atender a su uso, seguir sus movimientos, ver qué puede decirse y qué queda fuera.",
+  "Porque hay algo que todavía se resiste a una formulación definitiva. Y puedo permanecer ahí, no para descifrarlo, sino para encontrar una manera de hablar de ello sin reducirlo a aquello que ya sé decir."
+];
+const TYPE_MS = 34;     // velocidad de escritura por carácter
+/* ============================================= */
+
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const el = document.getElementById("text");
+const countEl = document.getElementById("count");
+const canvas = document.getElementById("fx");
+const ctx = canvas.getContext("2d");
+let dpr = 1, particles = [], wake = null;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", resize);
+resize();
+
+const advance = () => { if (wake) wake(); };
+addEventListener("click", advance);
+addEventListener("keydown", e => {
+  if (e.target.tagName === "BUTTON") return;
+  if ([" ", "Enter", "ArrowRight"].includes(e.key)) { e.preventDefault(); advance(); }
+});
+
+/* espera que se puede saltar con clic/espacio */
+function sleep(ms) {
+  return new Promise(res => {
+    const t = setTimeout(done, ms);
+    function done() { clearTimeout(t); wake = null; res(); }
+    wake = done;
+  });
+}
+
+function build(text) {
+  el.textContent = "";
+  const chars = [];
+  text.split("\n").forEach((line, li) => {
+    if (li) el.appendChild(document.createElement("br"));
+    line.split(" ").forEach((word, i, arr) => {
+      const w = document.createElement("span");
+      w.className = "w";
+      for (const ch of word) {
+        const s = document.createElement("span");
+        s.className = "c";
+        s.textContent = ch;
+        w.appendChild(s);
+        chars.push(s);
+      }
+      el.appendChild(w);
+      if (i < arr.length - 1) el.appendChild(document.createTextNode(" "));
+    });
+  });
+  return chars;
+}
+
+async function typeIn(chars) {
+  const cursor = document.createElement("span");
+  cursor.className = "cursor";
+  let skip = false;
+  for (let i = 0; i < chars.length; i++) {
+    chars[i].classList.add("on");
+    chars[i].after(cursor);
+    const ch = chars[i].textContent;
+    let d = reduced ? 6 : TYPE_MS * (0.6 + Math.random() * 0.9);
+    if (!reduced) {
+      if (".:".includes(ch)) d += 380;
+      else if (",;".includes(ch)) d += 170;
+    }
+    if (!skip) {
+      let jumped = false;
+      await new Promise(res => {
+        const t = setTimeout(() => { wake = null; res(); }, d);
+        wake = () => { clearTimeout(t); wake = null; jumped = true; res(); };
+      });
+      if (jumped) skip = true;
+    }
+  }
+  chars.forEach(c => c.classList.add("on"));
+  chars[chars.length - 1].after(cursor);
+  return cursor;
+}
+
+/* desintegración: cada carácter se apaga y suelta partículas que suben */
+function disintegrate(chars, cursor) {
+  cursor.remove();
+  if (reduced) {
+    el.style.transition = "opacity .6s";
+    el.style.opacity = 0;
+    return new Promise(r => setTimeout(r, 650)).then(() => {
+      el.style.transition = ""; el.style.opacity = 1;
+    });
+  }
+  const box = el.getBoundingClientRect();
+  const color = getComputedStyle(el).color;
+  const items = chars
+    .filter(c => c.textContent.trim())
+    .map(c => {
+      const r = c.getBoundingClientRect();
+      const delay = ((r.left - box.left) / box.width) * 500 + Math.random() * 900 + ((r.top - box.top) / box.height) * 700;
+      return { c, r, delay, done: false };
+    });
+  const start = performance.now();
+  return new Promise(resolve => {
+    function frame(now) {
+      const t = now - start;
+      for (const it of items) {
+        if (!it.done && t >= it.delay) {
+          it.done = true;
+          it.c.classList.remove("on");
+          it.c.classList.add("off");
+          const n = 5;
+          for (let k = 0; k < n; k++) {
+            particles.push({
+              x: it.r.left + Math.random() * it.r.width,
+              y: it.r.top + Math.random() * it.r.height,
+              vx: (Math.random() - 0.5) * 0.5,
+              vy: -(0.35 + Math.random() * 1.1),
+              size: 0.7 + Math.random() * 1.5,
+              life: 0,
+              max: 1100 + Math.random() * 1700,
+              ph: Math.random() * 6.28
+            });
+          }
+        }
+      }
+      draw(color);
+      const pending = items.some(i => !i.done);
+      if (pending || particles.length) requestAnimationFrame(frame);
+      else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+let last = performance.now();
+function draw(color) {
+  const now = performance.now();
+  const dt = Math.min(now - last, 50);
+  last = now;
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  ctx.fillStyle = color;
+  particles = particles.filter(p => p.life < p.max);
+  for (const p of particles) {
+    p.life += dt;
+    const k = p.life / p.max;
+    p.vy -= 0.0006 * dt;                      // aceleran hacia arriba
+    p.x += (p.vx + Math.sin(p.life * 0.004 + p.ph) * 0.25) * dt * 0.06 * 16 / 16;
+    p.y += p.vy * dt * 0.06 * 16 / 16 * 1.0;
+    ctx.globalAlpha = Math.max(0, 1 - k * k) * 0.9;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+async function run() {
+  for (let i = 0; i < SEGMENTS.length; i++) {
+    countEl.textContent = (i + 1) + " / " + SEGMENTS.length;
+    const chars = build(SEGMENTS[i]);
+    const cursor = await typeIn(chars);
+    await sleep(1400 + SEGMENTS[i].length * 18);   // pausa de lectura
+    await disintegrate(chars, cursor);
+    await sleep(350);
+  }
+  askAgain();
+}
+
+/* al final del texto: ¿Otra vez? Sí / No */
+async function askAgain() {
+  countEl.textContent = "";
+  const chars = build("¿Otra vez?");
+  const cursor = await typeIn(chars);
+  const box = document.createElement("span");
+  box.id = "again";
+  box.innerHTML = '<button id="again-yes">Sí</button><button id="again-no">No</button>';
+  el.appendChild(box);
+  box.firstChild.focus();
+  const answer = await new Promise(res => {
+    box.firstChild.addEventListener("click", e => { e.stopPropagation(); res(true); });
+    box.lastChild.addEventListener("click", e => { e.stopPropagation(); res(false); });
+  });
+  box.remove();
+  await disintegrate(chars, cursor);
+  await sleep(350);
+  if (answer) {
+    run();
+  } else {
+    document.getElementById("hint").style.display = "none";
+    countEl.style.display = "none";
+    startHall();
+  }
+}
+
+/* ============ VENTANA INICIAL ============ */
+const gate = document.getElementById("gate");
+const hall = document.getElementById("hall");
+const hctx = hall.getContext("2d");
+document.getElementById("yes").addEventListener("click", e => {
+  e.stopPropagation();
+  gate.remove();
+  document.getElementById("hint").style.display = "block";
+  countEl.style.display = "block";
+  run();
+});
+document.getElementById("no").addEventListener("click", e => {
+  e.stopPropagation();
+  gate.remove();
+  startHall();
+});
+
+/* ============ PASILLO DE PALABRAS ============ */
+const POOL = [...new Set(SEGMENTS.join(" ").toLowerCase()
+  .replace(/[.,:;¿?¡!]/g, "").split(/\s+/).filter(w => w.length > 3))];
+const LIT = "SEGMENTS";
+let fl = 1, flT = 1, nextFl = 0;
+
+function sizeHall() {
+  hall.width = innerWidth * dpr;
+  hall.height = innerHeight * dpr;
+  hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function startHall() {
+  hall.style.display = "block";
+  sizeHall();
+  addEventListener("resize", sizeHall);
+  requestAnimationFrame(hallFrame);
+}
+function pick(n, lane) {
+  const h = (Math.imul(n + 7, 73856093) ^ Math.imul(lane + 13, 19349663)) >>> 0;
+  return POOL[h % POOL.length];
+}
+const FONT = '40px "IBM Plex Mono", ui-monospace, Consolas, monospace';
+const ZMIN = 0.5, ZMAX = 16, WC = 1.6, HC = 1.0;
+const vis = z => Math.max(0, Math.min(1, (ZMAX - z) / 3)) * Math.max(0, Math.min(1, (z - 0.4) / 0.8));
+
+/* palabra pegada a una pared, con perspectiva real: cada letra se achata según su profundidad */
+function wallWord(word, zs, yw, hw, side, f, cx, cy) {
+  const dzc = 0.62 * hw, n = word.length;
+  for (let i = 0; i < n; i++) {
+    const k = side < 0 ? i : n - 1 - i;       // sentido de lectura según la pared
+    const zc = zs + (k + 0.5) * dzc;
+    const z1 = zc - dzc / 2, z2 = zc + dzc / 2;
+    if (z1 < 0.35 || z2 > ZMAX + 2) continue;
+    const w = f * WC * (1 / z1 - 1 / z2);
+    hctx.save();
+    hctx.translate(cx + side * WC * f / zc, cy + yw * HC * f / zc);
+    hctx.scale(w / 24, hw * f / zc / 40);
+    hctx.fillText(word[i], 0, 0);
+    hctx.restore();
+  }
+}
+
+function hallFrame(t) {
+  const W = innerWidth, H = innerHeight, cx = W / 2, cy = H / 2, f = H * 0.5;
+
+  /* luz intermitente (en movimiento reducido: pulso lento, sin parpadeo brusco) */
+  if (reduced) {
+    fl = 0.6 + 0.4 * Math.sin(t / 1400);
+  } else {
+    if (t >= nextFl) {
+      flT = Math.random() < 0.4 ? Math.random() * 0.1 : 0.55 + Math.random() * 0.45;
+      nextFl = t + (flT < 0.2 ? 40 + Math.random() * 120 : 120 + Math.random() * 520);
+    }
+    fl += (flT - fl) * 0.45;
+  }
+
+  hctx.globalCompositeOperation = "source-over";
+  hctx.globalAlpha = 1;
+  hctx.fillStyle = "#0a1119";
+  hctx.fillRect(0, 0, W, H);
+
+  const scroll = reduced ? 0 : (t / 1000) * 0.9;
+
+  /* SEGMENTS: escrita en la pared izquierda, a media altura, viaja con el pasillo */
+  const lh = 0.55, ldz = 0.62 * lh, lLen = LIT.length * ldz, P = 16;
+  const zl = reduced ? 4 : ZMIN + 1 + (((14 - scroll) % P) + P) % P;
+  const zcL = zl + lLen / 2;
+
+  /* resplandor que nace de la palabra */
+  const gx = cx - WC * f / zcL, gv = vis(zcL);
+  const gr = Math.max(H * 0.35, 2.5 * f / zcL);
+  hctx.globalCompositeOperation = "lighter";
+  const g = hctx.createRadialGradient(gx, cy, 0, gx, cy, gr);
+  g.addColorStop(0, "rgba(143,184,222," + (0.30 * fl * gv) + ")");
+  g.addColorStop(1, "rgba(143,184,222,0)");
+  hctx.fillStyle = g;
+  hctx.fillRect(0, 0, W, H);
+  hctx.globalCompositeOperation = "source-over";
+
+  hctx.textAlign = "center";
+  hctx.textBaseline = "middle";
+  hctx.fillStyle = "#dfe7ee";
+  hctx.font = FONT;
+
+  const walls = [-0.72, -0.24, 0.24, 0.72];
+  const cols = [-0.95, 0, 0.95];
+  for (let n = Math.floor(scroll) + 16; n >= Math.floor(scroll); n--) {
+    const z = (n - scroll) + ZMIN;
+    if (z < ZMIN || z > ZMAX) continue;
+    const s = f / z;
+    const a = (0.05 + 0.85 * fl * Math.exp(-Math.abs(z - zcL) / 4.5)) * vis(z);
+    if (a < 0.01) continue;
+    hctx.globalAlpha = a;
+    const hw = 0.16;
+
+    walls.forEach((yw, i) => {
+      [-1, 1].forEach(side => {
+        if (side < 0 && Math.abs(yw) < lh / 2 + 0.2 && z > zl - 1 && z < zl + lLen + 1) return;
+        const word = pick(n, i * 2 + (side > 0 ? 1 : 0));
+        wallWord(word, z - word.length * 0.62 * hw / 2, yw, hw, side, f, cx, cy);
+      });
+    });
+    cols.forEach((xw, i) => {
+      [-1, 1].forEach(side => {
+        hctx.save();
+        hctx.translate(cx + xw * s, cy + side * HC * s);
+        hctx.scale(hw * s / 40, hw * s / 40 * 0.35);
+        hctx.fillText(pick(n, 20 + i * 2 + (side > 0 ? 1 : 0)), 0, 0);
+        hctx.restore();
+      });
+    });
+  }
+
+  /* la palabra iluminada */
+  hctx.globalAlpha = vis(zcL) * (0.15 + 0.85 * fl);
+  hctx.shadowColor = "rgba(190,225,255," + fl + ")";
+  hctx.shadowBlur = 30 * fl;
+  hctx.fillStyle = "#ebf5ff";
+  wallWord(LIT, zl, 0, lh, -1, f, cx, cy);
+  hctx.shadowBlur = 0;
+  hctx.globalAlpha = 1;
+
+  requestAnimationFrame(hallFrame);
+}
+
+/* ============ MENSAJE INICIAL ============ */
+async function intro() {
+  const chars = build("Hola, Jorge.\nEste mensaje es para ti.");
+  const cursor = await typeIn(chars);
+  chars.forEach(c => c.classList.add("lit"));
+  let iv = null;
+  if (!reduced) {
+    iv = setInterval(() => {
+      chars.forEach(c => { c.style.opacity = Math.random() < 0.3 ? 0.12 + Math.random() * 0.4 : 1; });
+    }, 90);
+  }
+  await sleep(2600);                                  // letras iluminadas parpadeando
+  if (iv) clearInterval(iv);
+  chars.forEach(c => { c.style.opacity = ""; });
+  await sleep(900);
+  chars.forEach(c => c.classList.remove("lit"));
+  await disintegrate(chars, cursor);
+  await sleep(350);
+  gate.style.display = "flex";
+  document.getElementById("yes").focus();
+}
+intro();
+</script>
+</body>
+</html>
